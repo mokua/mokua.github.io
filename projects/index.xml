@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>Projects on Richard Mokua</title>
+    <link>https://mokua.github.io/projects/</link>
+    <description>Recent content in Projects on Richard Mokua</description>
+    <generator>Hugo -- gohugo.io</generator>
+    <language>en-us</language>
+    <copyright>© 2021 Richard Mokua</copyright>
+    <lastBuildDate>Fri, 12 Mar 2021 07:15:19 +0200</lastBuildDate><atom:link href="https://mokua.github.io/projects/index.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Testing stuff</title>
+      <link>https://mokua.github.io/projects/test/</link>
+      <pubDate>Fri, 12 Mar 2021 07:15:19 +0200</pubDate>
+      
+      <guid>https://mokua.github.io/projects/test/</guid>
+      <description></description>
+    </item>
+    
+  </channel>
+</rss>
