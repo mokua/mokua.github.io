@@ -7,7 +7,17 @@
     <generator>Hugo -- gohugo.io</generator>
     <language>en-us</language>
     <copyright>© 2021 Richard Mokua</copyright>
-    <lastBuildDate>Fri, 12 Mar 2021 07:15:19 +0200</lastBuildDate><atom:link href="https://mokua.github.io/index.xml" rel="self" type="application/rss+xml" />
+    <lastBuildDate>Fri, 12 Mar 2021 17:14:56 +0200</lastBuildDate><atom:link href="https://mokua.github.io/index.xml" rel="self" type="application/rss+xml" />
+    <item>
+      <title>Runc</title>
+      <link>https://mokua.github.io/blog/runc/</link>
+      <pubDate>Fri, 12 Mar 2021 17:14:56 +0200</pubDate>
+      
+      <guid>https://mokua.github.io/blog/runc/</guid>
+      <description>runC code review  1. Introduction 2. Big picture  Code base layout Creating a container Running a container   3. create.go  startContainer createContainer run(specs.Process) init.go   4. run.go    runC code review The Open Container Initiative https://opencontainers.org/about/overview/[OCI] maintains specifications for standards on Operating System process and application containers. Currently, OCI has two sepcifications:
+ Runtime Specification (https://github.com/opencontainers/runtime-spec) and Image Specification (https://github.com/opencontainers/image-spec).  The runtime-spec is concerned with the runtime that can be used to run an OCI compliant image-spec on a given OS platform.</description>
+    </item>
+    
     <item>
       <title>Testing stuff</title>
       <link>https://mokua.github.io/projects/test/</link>

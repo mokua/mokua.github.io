@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="author" content="Richard Mokua">
+    <link rel="shortcut icon" type="image/x-icon" href="https://mokua.github.io/img/favicon.ico">
+    <title>Runc | Richard Mokua</title>
+    <meta name="description" content="runC code review  1. Introduction 2. Big picture  Code base layout Creating a container Running a container   3. create.go  startContainer createContainer run(specs.Process) init.go   4. run.go    runC code review The Open Container Initiative https://opencontainers.org/about/overview/[OCI] maintains specifications for standards on Operating System process and application containers. Currently, OCI has two sepcifications:
+ Runtime Specification (https://github.com/opencontainers/runtime-spec) and Image Specification (https://github.com/opencontainers/image-spec).  The runtime-spec is concerned with the runtime that can be used to run an OCI compliant image-spec on a given OS platform.">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-BmbxuPwQa2lc/FVzBcNJ7UAyJxM6wuqIj61tLrc4wSX0szH/Ev+nYRRuWlolflfl" crossorigin="anonymous">
+    
+    <link rel="preload stylesheet" href="/css/main.min.css" as="style">
+    <link rel="stylesheet" type="text/css" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css">
+    <link rel="stylesheet" type="text/css" href="https://fonts.googleapis.com/css?family=Source+Sans+Pro:200,400,200bold,400old">
+    
+    <!--[if lt IE 9]>
+			<script src="https://oss.maxcdn.com/libs/html5shiv/3.7.0/html5shiv.js"></script>
+			<script src="https://oss.maxcdn.com/libs/respond.js/1.4.2/respond.min.js"></script>
+		<![endif]-->
+  </head>
+  <body>
+    <div id="content">
+  
+  <div class="container mb-3">
+  <nav class="navbar navbar-expand-lg">
+    <div class="container-fluid">
+      <a class="navbar-brand" href="https://mokua.github.io/">
+        <i class="fa fa-home"></i>
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar" aria-controls="navbar">
+        <i class="fa fa-bars"></i>
+      </button>
+
+      <div id="navbar" class="collapse navbar-collapse">
+        <ul class="navbar-nav ms-auto mb-2 mb-lg-0">
+          
+            
+              <li class="nav-item">
+                <li><a class="nav-link" href="/blog/">BLOG</a></li>
+              </li>
+            
+              <li class="nav-item">
+                <li><a class="nav-link" href="/projects/">PROJECTS</a></li>
+              </li>
+            
+              <li class="nav-item">
+                <li><a class="nav-link" href="/about/">ABOUT</a></li>
+              </li>
+            
+          
+        </ul>
+      </div>
+    </div>
+  </div>
+</nav>
+
+
+  <div class="container">
+    <h3 class="mt-3"><b><a href="https://mokua.github.io/blog/runc/">Runc</a></b></h3>
+    <div class="blog-title my-4">
+      <h6>
+        March 12, 2021
+        &nbsp;&nbsp;
+        
+      </h6>
+    </div>
+    <div class="panel">
+      <div class="panel-body">
+        <div class="blogpost">
+          <ul>
+<li><a href="#runc-code-review">runC code review</a>
+<ul>
+<li><a href="#1-introduction">1. Introduction</a></li>
+<li><a href="#2-big-picture">2. Big picture</a>
+<ul>
+<li><a href="#code-base-layout">Code base layout</a></li>
+<li><a href="#creating-a-container">Creating a container</a></li>
+<li><a href="#running-a-container">Running a container</a></li>
+</ul>
+</li>
+<li><a href="#3-creatego">3. create.go</a>
+<ul>
+<li><a href="#startcontainer">startContainer</a></li>
+<li><a href="#createcontainer">createContainer</a></li>
+<li><a href="#run-specsprocess-">run(specs.Process)</a></li>
+<li><a href="#initgo">init.go</a></li>
+</ul>
+</li>
+<li><a href="#4-rungo">4. run.go</a></li>
+</ul>
+</li>
+</ul>
+<h1 id="runc-code-review">runC code review</h1>
+<p>The Open Container Initiative <a href="https://opencontainers.org/about/overview/%5BOCI%5D">https://opencontainers.org/about/overview/[OCI]</a> maintains specifications for standards on Operating System process and application containers. Currently, OCI has two sepcifications:</p>
+<ol>
+<li>Runtime Specification (<a href="https://github.com/opencontainers/runtime-spec">https://github.com/opencontainers/runtime-spec</a>) and</li>
+<li>Image Specification (<a href="https://github.com/opencontainers/image-spec)">https://github.com/opencontainers/image-spec)</a>.</li>
+</ol>
+<p>The runtime-spec is concerned with the runtime that can be used to run an OCI compliant image-spec on a given OS platform.
+You can find OCI compliant run-times here <a href="https://github.com/opencontainers/runtime-spec/blob/master/implementations.md">https://github.com/opencontainers/runtime-spec/blob/master/implementations.md</a>.</p>
+<p>runC <a href="https://github.com/opencontainers/runc">https://github.com/opencontainers/runc</a> is a CLI tool for spawning and running containers according to the OCI specification.</p>
+<h2 id="1-introduction">1. Introduction</h2>
+<p>Am not going to through all the code,but am going to focus on the main aspects esepecially on Linux.
+Also some of the basics will be taken for greanted, so if you need a refresher follow the links above.</p>
+<h2 id="2-big-picture">2. Big picture</h2>
+<p>As per the run-time spec, <code>runC</code> must support the following operations:</p>
+<ol>
+<li>
+<p><code>state</code>
+This operations checks (queries) the state of an existing container.</p>
+<div class="highlight"><pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-fallback" data-lang="fallback"> state &lt;container-id&gt;
+</code></pre></div></li>
+<li>
+<p><code>create</code> - This operation creates a new container based on the config.json input file.</p>
+<div class="highlight"><pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-fallback" data-lang="fallback"> create &lt;container-id&gt; &lt;path-bundle&gt;
+</code></pre></div></li>
+<li>
+<p><code>start</code> - This operations starts the process specified in the container created in step 2 above. The container must be existing.</p>
+<div class="highlight"><pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-fallback" data-lang="fallback">  start &lt;container-id&gt;
+</code></pre></div></li>
+<li>
+<p><code>kill</code> - sends the signal specified to the running process in the conatiner.</p>
+<div class="highlight"><pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-fallback" data-lang="fallback">   kill &lt;container-id&gt; &lt;signal&gt;
+</code></pre></div></li>
+<li>
+<p><code>delete</code> - deletes the container, which must be in a running state.</p>
+</li>
+</ol>
+<div class="highlight"><pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-fallback" data-lang="fallback">    delete &lt;container-id&gt; 
+</code></pre></div><p>The runC codebase is <code>go</code> and a tiny amount of <code>c</code>.</p>
+<h3 id="code-base-layout">Code base layout</h3>
+<h3 id="creating-a-container">Creating a container</h3>
+<p>When <code>runC</code> is invoked</p>
+<div class="highlight"><pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-fallback" data-lang="fallback">    runc create &lt;container-id&gt;
+</code></pre></div><ol>
+<li>Every time <code>runc</code> is called, the code inside
+<code>github.com/opencontainers/runc/libcontainer/nsenter</code> will execute (before
+the Go runtime boots). However, because the <code>&quot;_LIBCONTAINER_INITPIPE&quot;</code>
+environment variable is not set[1] then that code just exits and the Go
+runtime takes over.</li>
+</ol>
+<div class="highlight"><div style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 1
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 2
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 3
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 4
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 5
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 6
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 7
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 8
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 9
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">10
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">11
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">12
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">13
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">14
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">15
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;;width:100%">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-go" data-lang="go">static <span style="color:#dc322f">int</span> <span style="color:#268bd2">initpipe</span>(void)
+{
+	<span style="color:#dc322f">int</span> pipenum;
+	char <span style="color:#719e07">*</span>initpipe, <span style="color:#719e07">*</span>endptr;
+
+	initpipe = <span style="color:#268bd2">getenv</span>(<span style="color:#2aa198">&#34;_LIBCONTAINER_INITPIPE&#34;</span>);   <span style="color:#586e75">//1
+</span><span style="color:#586e75"></span>	<span style="color:#719e07">if</span> (initpipe <span style="color:#719e07">==</span> NULL <span style="color:#719e07">||</span> <span style="color:#719e07">*</span>initpipe <span style="color:#719e07">==</span> <span style="color:#2aa198">&#39;\0&#39;</span>)
+		<span style="color:#719e07">return</span> <span style="color:#719e07">-</span><span style="color:#2aa198">1</span>;
+
+	pipenum = <span style="color:#268bd2">strtol</span>(initpipe, <span style="color:#719e07">&amp;</span>endptr, <span style="color:#2aa198">10</span>);
+	<span style="color:#719e07">if</span> (<span style="color:#719e07">*</span>endptr <span style="color:#719e07">!=</span> <span style="color:#2aa198">&#39;\0&#39;</span>)
+		<span style="color:#268bd2">bail</span>(<span style="color:#2aa198">&#34;unable to parse _LIBCONTAINER_INITPIPE&#34;</span>);
+
+	<span style="color:#719e07">return</span> pipenum;
+}
+</code></pre></td></tr></table>
+</div>
+</div>
+<ol start="2">
+<li>
+<p>runc create &ndash; checks the bundle and figures out what needs to be done, as we will see later in details.
+Then it creates a <code>runc init</code> subprocess (which will eventually become the PID 1 process inside the
+container) &ndash; with <code>&quot;_LIBCONTAINER_INITPIPE&quot;</code> set to an fd used for
+communication between the two processes.</p>
+</li>
+<li>
+<p>runc init &ndash;  <code>nsenter</code> runs and because
+<code>&quot;_LIBCONTAINER_INITPIPE&quot;</code> is set to a valid fd <code>nsexec()</code> will run and set
+up all of the namespaces that were set in <code>config.json</code>. This involves
+creating a bunch of processes, and at the end it will return and the Go runtime will boot up.</p>
+</li>
+<li>
+<p>runc init &ndash; After <code>nsexec()</code> returns, then <code>factory.StartInitialization()</code> inside <code>init.go</code> runs.
+It will run all of the Go initialization that is necessary to set up a container.</p>
+</li>
+<li>
+<p>runc init &ndash; at the very end of all of that, <code>runc init</code> stops
+executing and waits to be told to <code>execve(2)</code> the container process (as set in config.json).</p>
+</li>
+<li>
+<p>runc create &ndash; exits because it has nothing else to do.</p>
+</li>
+</ol>
+<h3 id="running-a-container">Running a container</h3>
+<ol>
+<li>runc start &ndash; signals the <code>runc init</code> process to start running the user&rsquo;s process inside the container by reading from the FIFO to which the
+create process writes to.</li>
+</ol>
+<div class="highlight"><pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-fallback" data-lang="fallback">    runc start &lt;container-id&gt;
+</code></pre></div><h2 id="3-creatego">3. create.go</h2>
+<p><code>runC</code> execution starts from this function inside <code>create.go</code> file :</p>
+<p>create.go
+<div class="highlight"><div style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">354
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">355
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">356
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">357
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">358
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">359
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">360
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">361
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">362
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">363
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">364
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">365
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">366
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">367
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">368
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">369
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">370
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">371
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">372
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">373
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;;width:100%">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-go" data-lang="go">Action: <span style="color:#268bd2">func</span>(context <span style="color:#719e07">*</span>cli.Context) <span style="color:#dc322f">error</span> {
+		<span style="color:#719e07">if</span> err <span style="color:#719e07">:=</span> <span style="color:#268bd2">checkArgs</span>(context, <span style="color:#2aa198">1</span>, exactArgs); err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {
+			<span style="color:#719e07">return</span> err
+		}
+		<span style="color:#719e07">if</span> err <span style="color:#719e07">:=</span> <span style="color:#268bd2">revisePidFile</span>(context); err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {
+			<span style="color:#719e07">return</span> err
+		}
+		spec, err <span style="color:#719e07">:=</span> <span style="color:#268bd2">setupSpec</span>(context)
+		<span style="color:#719e07">if</span> err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {
+			<span style="color:#719e07">return</span> err
+		}
+		status, err <span style="color:#719e07">:=</span> <span style="color:#268bd2">startContainer</span>(context, spec, CT_ACT_CREATE, <span style="color:#cb4b16">nil</span>)
+		<span style="color:#719e07">if</span> err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {
+			<span style="color:#719e07">return</span> err
+		}
+		<span style="color:#586e75">// exit with the container&#39;s exit status so any external supervisor is
+</span><span style="color:#586e75"></span>		<span style="color:#586e75">// notified of the exit with the correct exit status.
+</span><span style="color:#586e75"></span>		os.<span style="color:#268bd2">Exit</span>(status)
+		<span style="color:#719e07">return</span> <span style="color:#cb4b16">nil</span>
+	}
+</code></pre></td></tr></table>
+</div>
+</div></p>
+<p>One of the arguments passed to the <code>create.go</code> is the file name to write the process id to.</p>
+<p>The function <code>revisePidFile</code> converts the pid filename to an absolute path and stashes it to the <code>context</code>.</p>
+<p><code>setupSpec</code> - reads the path to the bundle file , which contains the <code>config.json</code> file. The function then loads the <code>config.json</code> file
+and decodes into the object <code>*specs.Spec</code>.
+The function also validates the Spec struct  inside <code>validateProcessSpec</code>.</p>
+<p>The <code>startContainer</code> is the main function and creates the container based on the <code>specs.Spec</code> struct.</p>
+<h3 id="startcontainer">startContainer</h3>
+<p><code>utils_linux.go</code>
+<div class="highlight"><div style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 1
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 2
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 3
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 4
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 5
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 6
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 7
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 8
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 9
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">10
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">11
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">12
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">13
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">14
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">15
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">16
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">17
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">18
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">19
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">20
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">21
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">22
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">23
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">24
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">25
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">26
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">27
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">28
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">29
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">30
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">31
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">32
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">33
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;;width:100%">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-go" data-lang="go"><span style="color:#268bd2">func</span> <span style="color:#268bd2">startContainer</span>(context <span style="color:#719e07">*</span>cli.Context, spec <span style="color:#719e07">*</span>specs.Spec, action CtAct, criuOpts <span style="color:#719e07">*</span>libcontainer.CriuOpts) (<span style="color:#dc322f">int</span>, <span style="color:#dc322f">error</span>) {
+	id <span style="color:#719e07">:=</span> context.<span style="color:#268bd2">Args</span>().<span style="color:#268bd2">First</span>()
+	<span style="color:#719e07">if</span> id <span style="color:#719e07">==</span> <span style="color:#2aa198">&#34;&#34;</span> {
+		<span style="color:#719e07">return</span> <span style="color:#719e07">-</span><span style="color:#2aa198">1</span>, errEmptyID
+	}
+
+	<span style="color:#586e75">//---elided
+</span><span style="color:#586e75"></span>
+	container, err <span style="color:#719e07">:=</span> <span style="color:#268bd2">createContainer</span>(context, id, spec)
+	<span style="color:#719e07">if</span> err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {
+		<span style="color:#719e07">return</span> <span style="color:#719e07">-</span><span style="color:#2aa198">1</span>, err
+	}
+
+
+	<span style="color:#586e75">//--more elided
+</span><span style="color:#586e75"></span>
+	r <span style="color:#719e07">:=</span> <span style="color:#719e07">&amp;</span>runner{
+		enableSubreaper: !context.<span style="color:#268bd2">Bool</span>(<span style="color:#2aa198">&#34;no-subreaper&#34;</span>),
+		shouldDestroy:   <span style="color:#cb4b16">true</span>,
+		container:       container,
+		listenFDs:       listenFDs,
+		notifySocket:    notifySocket,
+		consoleSocket:   context.<span style="color:#268bd2">String</span>(<span style="color:#2aa198">&#34;console-socket&#34;</span>),
+		detach:          context.<span style="color:#268bd2">Bool</span>(<span style="color:#2aa198">&#34;detach&#34;</span>),
+		pidFile:         context.<span style="color:#268bd2">String</span>(<span style="color:#2aa198">&#34;pid-file&#34;</span>),
+		preserveFDs:     context.<span style="color:#268bd2">Int</span>(<span style="color:#2aa198">&#34;preserve-fds&#34;</span>),
+		action:          action,
+		criuOpts:        criuOpts,
+		init:            <span style="color:#cb4b16">true</span>,
+		logLevel:        logLevel,
+	}
+	<span style="color:#719e07">return</span> r.<span style="color:#268bd2">run</span>(spec.Process)
+}
+</code></pre></td></tr></table>
+</div>
+</div></p>
+<p>This function starts by getting the container id from the context , then calls the <code>createContainer</code>.
+It then creates the <code>runner</code> struct and runs it , passing in the <code>spec.Process</code>.</p>
+<h3 id="createcontainer">createContainer</h3>
+<p><code>utils_linux.go</code>
+<div class="highlight"><div style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 1
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 2
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 3
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 4
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 5
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 6
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 7
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 8
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 9
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">10
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">11
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">12
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">13
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">14
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">15
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">16
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">17
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">18
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">19
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">20
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">21
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">22
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">23
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">24
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;;width:100%">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-go" data-lang="go"><span style="color:#268bd2">func</span> <span style="color:#268bd2">createContainer</span>(context <span style="color:#719e07">*</span>cli.Context, id <span style="color:#dc322f">string</span>, spec <span style="color:#719e07">*</span>specs.Spec) (libcontainer.Container, <span style="color:#dc322f">error</span>) {
+	rootlessCg, err <span style="color:#719e07">:=</span> <span style="color:#268bd2">shouldUseRootlessCgroupManager</span>(context)
+	<span style="color:#719e07">if</span> err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {
+		<span style="color:#719e07">return</span> <span style="color:#cb4b16">nil</span>, err
+	}
+	config, err <span style="color:#719e07">:=</span> specconv.<span style="color:#268bd2">CreateLibcontainerConfig</span>(<span style="color:#719e07">&amp;</span>specconv.CreateOpts{
+		CgroupName:       id,
+		UseSystemdCgroup: context.<span style="color:#268bd2">GlobalBool</span>(<span style="color:#2aa198">&#34;systemd-cgroup&#34;</span>),
+		NoPivotRoot:      context.<span style="color:#268bd2">Bool</span>(<span style="color:#2aa198">&#34;no-pivot&#34;</span>),
+		NoNewKeyring:     context.<span style="color:#268bd2">Bool</span>(<span style="color:#2aa198">&#34;no-new-keyring&#34;</span>),
+		Spec:             spec,
+		RootlessEUID:     os.<span style="color:#268bd2">Geteuid</span>() <span style="color:#719e07">!=</span> <span style="color:#2aa198">0</span>,
+		RootlessCgroups:  rootlessCg,
+	})
+	<span style="color:#719e07">if</span> err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {
+		<span style="color:#719e07">return</span> <span style="color:#cb4b16">nil</span>, err
+	}
+
+	factory, err <span style="color:#719e07">:=</span> <span style="color:#268bd2">loadFactory</span>(context)
+	<span style="color:#719e07">if</span> err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {
+		<span style="color:#719e07">return</span> <span style="color:#cb4b16">nil</span>, err
+	}
+	<span style="color:#719e07">return</span> factory.<span style="color:#268bd2">Create</span>(id, config)
+}
+</code></pre></td></tr></table>
+</div>
+</div></p>
+<p>the function <code>CreateLibcontainerConfig</code> creates a new libcontainer configuration (<code>*configs.Config</code>) from a given specification and a cgroup name.</p>
+<p>Then the function <code>loadFactory</code> returns a linux based container factory based in the root directory for execing containers.</p>
+<p>The <code>LinuxFactory</code> has the following fields:</p>
+<div class="highlight"><div style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">354
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">355
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">356
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">357
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">358
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">359
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">360
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;;width:100%">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-go" data-lang="go">l <span style="color:#719e07">:=</span> <span style="color:#719e07">&amp;</span>LinuxFactory{
+		Root:      root,  
+		InitPath:  <span style="color:#2aa198">&#34;/proc/self/exe&#34;</span>,                          <span style="color:#586e75">//1
+</span><span style="color:#586e75"></span>		InitArgs:  []<span style="color:#dc322f">string</span>{os.Args[<span style="color:#2aa198">0</span>], <span style="color:#2aa198">&#34;init&#34;</span>},              <span style="color:#586e75">//2
+</span><span style="color:#586e75"></span>		Validator: validate.<span style="color:#268bd2">New</span>(),
+		CriuPath:  <span style="color:#2aa198">&#34;criu&#34;</span>,
+	}
+</code></pre></td></tr></table>
+</div>
+</div>
+<ol>
+<li>The path to the executable that will be run in the init process</li>
+<li>The function to invoke when the init process starts.</li>
+</ol>
+<p><code>factory.Create</code> takes the container id and configs and create <code>LinuxContainer</code> in a stopped state.
+The <code>factory.Create</code> starts with some validations , then creates a directory with the correct permissions that will act as the root of the process to be executed.</p>
+<div class="highlight"><div style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">354
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">355
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">356
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">357
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">358
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">359
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">360
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">361
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">362
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">363
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">364
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;;width:100%">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-go" data-lang="go">c <span style="color:#719e07">:=</span> <span style="color:#719e07">&amp;</span>linuxContainer{
+		id:            id,                              <span style="color:#586e75">//1
+</span><span style="color:#586e75"></span>		root:          containerRoot,                   <span style="color:#586e75">//2
+</span><span style="color:#586e75"></span>		config:        config,                          <span style="color:#586e75">//3
+</span><span style="color:#586e75"></span>		initPath:      l.InitPath,                      <span style="color:#586e75">//4
+</span><span style="color:#586e75"></span>		initArgs:      l.InitArgs,                      <span style="color:#586e75">//5
+</span><span style="color:#586e75"></span>		criuPath:      l.CriuPath,     
+		newuidmapPath: l.NewuidmapPath,
+		newgidmapPath: l.NewgidmapPath,
+		cgroupManager: l.<span style="color:#268bd2">NewCgroupsManager</span>(config.Cgroups, <span style="color:#cb4b16">nil</span>), <span style="color:#586e75">//6
+</span><span style="color:#586e75"></span>	}
+</code></pre></td></tr></table>
+</div>
+</div>
+<ol>
+<li>The container id</li>
+<li>the path to the root</li>
+<li>the config struct</li>
+<li>the path to the executable <code>/proc/self/exe</code></li>
+<li>the init argas to pass to the executable, <code>init</code></li>
+<li>the cgroup manager</li>
+</ol>
+<h3 id="runspecsprocess">run(specs.Process)</h3>
+<p>The run function executes the <code>init</code> process inside the contained enviroment.</p>
+<div class="highlight"><div style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 1
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 2
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 3
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 4
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 5
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 6
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 7
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 8
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 9
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">10
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">11
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">12
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">13
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">14
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">15
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">16
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">17
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">18
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">19
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">20
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">21
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">22
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">23
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">24
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;;width:100%">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-go" data-lang="go"><span style="color:#268bd2">func</span> (r <span style="color:#719e07">*</span>runner) <span style="color:#268bd2">run</span>(config <span style="color:#719e07">*</span>specs.Process) (<span style="color:#dc322f">int</span>, <span style="color:#dc322f">error</span>) {
+	<span style="color:#586e75">//-- ellided
+</span><span style="color:#586e75"></span>	process, err <span style="color:#719e07">:=</span> <span style="color:#268bd2">newProcess</span>(<span style="color:#719e07">*</span>config, r.init, r.logLevel)  <span style="color:#586e75">//1
+</span><span style="color:#586e75"></span>	<span style="color:#719e07">if</span> err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {
+		<span style="color:#719e07">return</span> <span style="color:#719e07">-</span><span style="color:#2aa198">1</span>, err
+	}
+	<span style="color:#586e75">//--ellided
+</span><span style="color:#586e75"></span>	<span style="color:#268bd2">var</span> (
+		detach = r.detach <span style="color:#719e07">||</span> (r.action <span style="color:#719e07">==</span> CT_ACT_CREATE)
+	)
+	<span style="color:#586e75">//--ellided
+</span><span style="color:#586e75"></span>	<span style="color:#719e07">switch</span> r.action {
+	<span style="color:#719e07">case</span> CT_ACT_CREATE:
+		err = r.container.<span style="color:#268bd2">Start</span>(process)                      <span style="color:#586e75">//2
+</span><span style="color:#586e75"></span>	<span style="color:#719e07">case</span> CT_ACT_RESTORE:
+		err = r.container.<span style="color:#268bd2">Restore</span>(process, r.criuOpts)
+	<span style="color:#719e07">case</span> CT_ACT_RUN:
+		err = r.container.<span style="color:#268bd2">Run</span>(process)
+	<span style="color:#719e07">default</span>:
+		<span style="color:#b58900">panic</span>(<span style="color:#2aa198">&#34;Unknown action&#34;</span>)
+	}
+	<span style="color:#586e75">//--ellided
+</span><span style="color:#586e75"></span>	<span style="color:#719e07">return</span> status, err
+}
+</code></pre></td></tr></table>
+</div>
+</div>
+<ol>
+<li>creates the libcontainer Process to be executed with the arguments from the spec</li>
+<li>starts execution of the process</li>
+</ol>
+<p>Here is the <code>container.Start(process)</code></p>
+<div class="highlight"><div style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 1
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 2
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 3
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 4
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 5
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 6
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 7
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 8
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 9
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">10
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">11
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">12
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">13
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">14
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">15
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;;width:100%">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-go" data-lang="go"><span style="color:#268bd2">func</span> (c <span style="color:#719e07">*</span>linuxContainer) <span style="color:#268bd2">Start</span>(process <span style="color:#719e07">*</span>Process) <span style="color:#dc322f">error</span> {
+	<span style="color:#586e75">//--ellided
+</span><span style="color:#586e75"></span>	<span style="color:#719e07">if</span> process.Init {
+		<span style="color:#719e07">if</span> err <span style="color:#719e07">:=</span> c.<span style="color:#268bd2">createExecFifo</span>(); err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {     <span style="color:#586e75">//1
+</span><span style="color:#586e75"></span>			<span style="color:#719e07">return</span> err
+		}
+	}
+	<span style="color:#719e07">if</span> err <span style="color:#719e07">:=</span> c.<span style="color:#268bd2">start</span>(process); err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {          <span style="color:#586e75">//2
+</span><span style="color:#586e75"></span>		<span style="color:#719e07">if</span> process.Init {
+			c.<span style="color:#268bd2">deleteExecFifo</span>()
+		}
+		<span style="color:#719e07">return</span> err
+	}
+	<span style="color:#719e07">return</span> <span style="color:#cb4b16">nil</span>
+}
+</code></pre></td></tr></table>
+</div>
+</div>
+<p>The <code>createExecFifo (1)</code> creates a FIFO. <code>runc create</code> creates the containers and init process,
+preparing everything needed in order for the user&rsquo;s init process to
+start. Before it does the final <code>execve</code> into the user&rsquo;s code, it
+blocks on the <code>execFifo</code> (by attempting to write to it). This will
+block until another process opens the FIFO for reading (which is what <code>runc start</code> does). (<a href="https://groups.google.com/a/opencontainers.org/g/dev/c/ZKIFytzvilE">https://groups.google.com/a/opencontainers.org/g/dev/c/ZKIFytzvilE</a>)</p>
+<p>The (2) is where the namespaces are setup and the child process is run inside the contained enviroment.
+This is done through a series of forks.
+We are going to go through this in details.</p>
+<div class="highlight"><div style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">354
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">355
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">356
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">357
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">358
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">359
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">360
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">361
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">362
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">363
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">364
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">365
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;;width:100%">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-go" data-lang="go"><span style="color:#268bd2">func</span> (c <span style="color:#719e07">*</span>linuxContainer) <span style="color:#268bd2">start</span>(process <span style="color:#719e07">*</span>Process) <span style="color:#dc322f">error</span> {
+	parent, err <span style="color:#719e07">:=</span> c.<span style="color:#268bd2">newParentProcess</span>(process)         <span style="color:#586e75">//1
+</span><span style="color:#586e75"></span>	<span style="color:#719e07">if</span> err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {
+		<span style="color:#719e07">return</span> <span style="color:#268bd2">newSystemErrorWithCause</span>(err, <span style="color:#2aa198">&#34;creating new parent process&#34;</span>)
+	}
+	parent.<span style="color:#268bd2">forwardChildLogs</span>()
+	<span style="color:#719e07">if</span> err <span style="color:#719e07">:=</span> parent.<span style="color:#268bd2">start</span>(); err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {             <span style="color:#586e75">//2
+</span><span style="color:#586e75"></span>		<span style="color:#719e07">return</span> <span style="color:#268bd2">newSystemErrorWithCause</span>(err, <span style="color:#2aa198">&#34;starting container process&#34;</span>)
+	}
+	<span style="color:#586e75">//-- ellided
+</span><span style="color:#586e75"></span>	<span style="color:#719e07">return</span> <span style="color:#cb4b16">nil</span>
+}
+</code></pre></td></tr></table>
+</div>
+</div>
+<p>The function <code>newParentProcess</code> creates the process that will eventually be the parent process.
+The process is then started at <code>(2)</code> , when this process returns, the child process has been setup.</p>
+<p>The flow at a high level is as below:</p>
+<ul>
+<li>the parent process, created in <code>(1)</code>, starts the command which creates a new process executing the binary <code>/proc/self/exe</code> and invoking the <code>init</code> function.</li>
+<li>since <code>init.go</code> imports <code>github.com/opencontainers/runc/libcontainer/nsenter</code>, the execution is transfered to the <code>C</code> code <code>nsexec.c</code> inside <code>void nsexec(void)</code>.</li>
+<li>the main process then transfers the <code>bootstrap</code> config data to the init process</li>
+<li>the init process reads the bootstrap configrations from the parent process</li>
+<li>init process updates the <code>oom_score_adj</code> (requires priveleged user)</li>
+<li>if there is need to configure namespaces, the init process is made non-dumpable - <code>prctl(PR_SET_DUMPABLE, 0, 0, 0, 0)</code></li>
+<li>then the init process creates <code>sync_child_pipe</code> &amp; <code>sync_grandchild_pipe</code> for communicating with the child and grandchild respectively</li>
+</ul>
+<p><img src="/img/runc_main_parent.png" alt="alt text" title="Creating the child process"></p>
+<ul>
+<li>
+<p>the init process then calls <code>clone_parent()</code>, which <code>clones(2)</code> the parent and creates child <code>clone(CLONE_PARENT | SIGCHLD)</code>.</p>
+</li>
+<li>
+<p>the child process:</p>
+<ul>
+<li>
+<p>checks from the bootstrap config data if there is need to join namespaces, then join all the provided namespaces (<code>config.namespaces</code>)</p>
+</li>
+<li>
+<p>next, unsharing namespaces, but this is not done in one go;</p>
+</li>
+<li>
+<p>First, it starts with unsharing the usernamespaces; check if the config.cloneflags has the CLONE_NEWUSER flag set, if so, then its unshared:
+<div class="highlight"><div style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">1
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">2
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">3
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">4
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">5
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">6
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">7
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;;width:100%">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-c" data-lang="c">		<span style="color:#719e07">if</span> (config.cloneflags <span style="color:#719e07">&amp;</span> CLONE_NEWUSER) {
+			<span style="color:#719e07">if</span> (unshare(CLONE_NEWUSER) <span style="color:#719e07">&lt;</span> <span style="color:#2aa198">0</span>)
+				bail(<span style="color:#2aa198">&#34;failed to unshare user namespace&#34;</span>);
+				config.cloneflags <span style="color:#719e07">&amp;=</span> <span style="color:#719e07">~</span>CLONE_NEWUSER;
+				<span style="color:#586e75">// --ellided
+</span><span style="color:#586e75"></span>		}
+		</code></pre></td></tr></table>
+</div>
+</div></p>
+</li>
+<li>
+<p>since child does not have priveleges to do mappings, the child signals parent to do the mapping.</p>
+</li>
+</ul>
+</li>
+<li>
+<p>the parent process:</p>
+<ul>
+<li>the parent process updates the <code>/proc/%d/uid_map</code>  and <code>/proc/%d/gid_map</code> for child</li>
+</ul>
+<p><img src="/img/runc2-parent-child1.png" alt="alt text" title="Title"></p>
+</li>
+<li>
+<p>the child process:</p>
+<ul>
+<li>
+<p>makes the process non-dumpable</p>
+</li>
+<li>
+<p>becomes root in the namespace: <code>setresuid(0, 0, 0)</code> since the rest of <code>unshare</code> will requre root priveleges in the child process.</p>
+</li>
+<li>
+<p><code>unshare</code> all of the rest of the namespaces, except the cgroup namespace: <code>unshare(config.cloneflags &amp; ~CLONE_NEWCGROUP)</code></p>
+</li>
+<li>
+<p>the child process then creates the grand child.
+The reason for this fork again is so that we can enter the new PID namespace.
+calls to <code>unshare(2)</code> with the <code>CLONE_NEWPID</code> flag cause children
+subsequently created by the caller to be placed in a different
+PID namespace from the caller. These calls do not, however,
+change the PID namespace of the calling process, because doing so
+would change the caller&rsquo;s idea of its own PID (as reported by
+getpid()), which would break many applications and libraries.
+(<a href="https://man7.org/linux/man-pages/man7/pid_namespaces.7.html">https://man7.org/linux/man-pages/man7/pid_namespaces.7.html</a>)</p>
+</li>
+<li>
+<p>send grand_child &amp; child pid to the parent process.</p>
+</li>
+<li>
+<p>the child process then exits.</p>
+</li>
+</ul>
+<p><img src="/img/runc2-parent-grandchild.png" alt="alt text" title="Child and grand child processes"></p>
+</li>
+<li>
+<p>the parent process:</p>
+<ul>
+<li>receive the grand_child &amp; child pid from child</li>
+<li>send the pids to the <code>create.go</code> process</li>
+</ul>
+</li>
+<li>
+<p>the grand_child process:</p>
+<ul>
+<li>setsid, setuid and setgid</li>
+</ul>
+</li>
+<li>
+<p>the <code>create.go</code> process:</p>
+<ul>
+<li>send clone cgroup signal to grand child to clone the cgroup.</li>
+</ul>
+</li>
+<li>
+<p>grand child process:</p>
+<ul>
+<li><code>unshare(CLONE_NEWCGROUP)</code></li>
+<li>returns control from <code>nsexec</code> and the <code>go</code> runtime takes over. Control goes back to <code>init.go</code>.</li>
+</ul>
+</li>
+</ul>
+<h3 id="initgo">init.go</h3>
+<p>At this point, we <code>nsexec</code> has finished setting up required namespaces and unsharing as required.
+From now onwards, the <code>go</code> runtime will run all initialization that is necessary to set up a container.
+During the initialization, the process sychronizes between the <code>create.go</code> and the <code>init.go</code> process.</p>
+<p><img src="/img/runc2-initalization.png" alt="alt text" title="Initializations"></p>
+<div class="highlight"><div style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 1
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 2
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 3
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 4
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 5
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 6
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 7
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 8
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050"> 9
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">10
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;;width:100%">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-go" data-lang="go"><span style="color:#268bd2">func</span> (l <span style="color:#719e07">*</span>LinuxFactory) <span style="color:#268bd2">StartInitialization</span>() (err <span style="color:#dc322f">error</span>) {
+	<span style="color:#586e75">// -- ellidded
+</span><span style="color:#586e75"></span>	
+	i, err <span style="color:#719e07">:=</span> <span style="color:#268bd2">newContainerInit</span>(it, pipe, consoleSocket, fifofd)  <span style="color:#586e75">//1
+</span><span style="color:#586e75"></span>	<span style="color:#719e07">if</span> err <span style="color:#719e07">!=</span> <span style="color:#cb4b16">nil</span> {
+		<span style="color:#719e07">return</span> err
+	}
+
+	<span style="color:#719e07">return</span> i.<span style="color:#268bd2">Init</span>()                                              <span style="color:#586e75">//2
+</span><span style="color:#586e75"></span>}
+</code></pre></td></tr></table>
+</div>
+</div>
+<ol>
+<li>
+<p><code>newContainerInit</code> reads the config from the <code>create.go</code> process through the pipe <code>messageSockPair</code>.
+From the configs, it crates a <code>linuxStandardInit</code> process.</p>
+<div class="highlight"><div style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4">
+<table style="border-spacing:0;padding:0;margin:0;border:0;width:auto;overflow:auto;display:block;"><tr><td style="vertical-align:top;padding:0;margin:0;border:0;">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">1
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">2
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">3
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">4
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">5
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">6
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">7
+</span><span style="margin-right:0.4em;padding:0 0.4em 0 0.4em;color:#495050">8
+</span></code></pre></td>
+<td style="vertical-align:top;padding:0;margin:0;border:0;;width:100%">
+<pre style="color:#93a1a1;background-color:#002b36;-moz-tab-size:4;-o-tab-size:4;tab-size:4"><code class="language-go" data-lang="go">   <span style="color:#719e07">return</span> <span style="color:#719e07">&amp;</span>linuxStandardInit{
+			pipe:          pipe,
+			consoleSocket: consoleSocket,
+			parentPid:     unix.<span style="color:#268bd2">Getppid</span>(),
+			config:        config,
+			fifoFd:        fifoFd,
+		}, <span style="color:#cb4b16">nil</span>
+	
+</code></pre></td></tr></table>
+</div>
+</div>
+</li>
+<li>
+<p>The <code>Init()</code> function does the hard work of setting up the container:</p>
+<p>Inside the <code>init.go</code> process.</p>
+<ul>
+<li>setup the network - defines configuration for a container&rsquo;s networking stack</li>
+<li>setup the network route to create entries in the route table as the container is started</li>
+<li>prepareRootfs - sets up the devices, mount points, and filesystems for use inside a new mount namespace</li>
+<li>setup the console</li>
+<li>setup the hostname</li>
+<li>apply apparmor profile</li>
+<li>write sysctl</li>
+<li>configure readonly paths</li>
+<li>configure maskpaths</li>
+<li>set up nonewprivileges</li>
+<li>sync with parent.</li>
+</ul>
+<p>Inside the <code>create.go</code> process</p>
+<ul>
+<li>setupRlimit</li>
+<li>call prestart and CreateRuntime hooks</li>
+<li>then sync with the child</li>
+</ul>
+<p>We continue in the <code>init.go</code> process:</p>
+<ul>
+<li>Init Seccomp</li>
+<li>config the cababilities, apply bounds , setup user</li>
+<li>close the pipe to signal the <code>create.go</code> process that we are done.</li>
+<li>then we attempt to write to the FIFO before execv into the users process. <code>init.go</code> blocks on the <code>execFifo</code> until
+another process opens the FIFO for reading (which is what <code>runc start</code> does).</li>
+<li>then set the seccomp profile as close to execve as possible, reducing the number of syscalls that need to be allowed/exempted.</li>
+<li>call all the <code>startContainer</code> hooks</li>
+<li>finally, <code>unix.Exec</code> into the user process.</li>
+</ul>
+</li>
+</ol>
+<h2 id="4-rungo">4. run.go</h2>
+<p>To be continued ..</p>
+
+          
+          
+        </div>
+      </div>
+      <div class="disqus">
+        
+      </div>
+    </div>
+  </div>
+
+    </div>
+    
+    <footer class="footer">
+  <div class="container">
+    <div class="text-muted">&copy; All rights reserved. Powered by <a href="https://gohugo.io/">Hugo</a> and
+    <a href="http://www.github.com/nurlansu/hugo-sustain/">sustain</a> with ♥</div>
+  </div>
+</footer>
+
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta2/dist/js/bootstrap.min.js" integrity="sha384-nsg8ua9HAw1y0W1btsyWgBklPnCUAFLuTMS2G72MMONqmOymq585AcH49TLBQObG" crossorigin="anonymous"></script>
+
+  </body>
+</html>
