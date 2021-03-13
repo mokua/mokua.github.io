@@ -18,21 +18,14 @@
     </item>
     
     <item>
-      <title>Test</title>
-      <link>https://mokua.github.io/blog/test/</link>
-      <pubDate>Fri, 12 Mar 2021 07:14:53 +0200</pubDate>
-      
-      <guid>https://mokua.github.io/blog/test/</guid>
-      <description></description>
-    </item>
-    
-    <item>
       <title>About</title>
       <link>https://mokua.github.io/about/</link>
       <pubDate>Fri, 12 Mar 2021 07:14:27 +0200</pubDate>
       
       <guid>https://mokua.github.io/about/</guid>
-      <description>I am software engineer, currently working for COMESA, where I am leading the Digital Yellow Card and RCTG projects.</description>
+      <description>I am a full-stack software engineer with 14 years’ experience building web applications, web services and system integrations using Java (especially JEE) and JavaScript, Go and Rust.
+Good at translating commercial needs into software requirements and solutions, writing user stories and leading technical teams, maintaining systems in production and generally keeping the lights-on.
+All-round and hands-on developer, sysadmin, and overall problem solver.</description>
     </item>
     
   </channel>
